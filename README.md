@@ -1,5 +1,5 @@
 # Bank_Fraud_Predictive
-Model to predict fraudulent bank applications using a large Kaggle dataset.
+Model to predict fraudulent bank applications using a large Kaggle dataset, coded in R.
 Data available here: https://www.kaggle.com/datasets/sgpjesus/bank-account-fraud-dataset-neurips-2022
 
 Base Analysis uses the Base dataset, which represents the real-world, anonymized fraud data.
