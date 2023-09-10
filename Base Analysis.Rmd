@@ -1,0 +1,168 @@
+---
+title: "Big Data Project Base Analysis"
+output: html_document
+date: "2023-05-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR2)
+library(MASS)
+library(tidyverse)
+library(dplyr)
+library(glmnet)
+library(leaps)
+library(FNN)
+library(caret)
+library(ROSE)
+```
+
+## Load in data and clean
+
+```{r, warning=FALSE}
+rm(list=ls())
+base=read_csv("Base.csv")
+
+# Fill -1 with NAs where appropriate
+baseclean=base %>%
+  mutate(prev_address_months_count = na_if(prev_address_months_count, -1),
+  current_address_months_count = na_if(current_address_months_count, -1),
+  bank_months_count = na_if(bank_months_count, -1)) # Replacing -1 with NA
+
+# Mutate new variables for missing info on prev_address_months_count and bank_months_na
+baseclean=mutate_each(baseclean, funs(replace(., is.na(.), 0)), prev_address_months_count)
+baseclean=mutate_each(baseclean, funs(replace(., is.na(.), 0)), bank_months_count)
+baseclean=baseclean%>%
+  mutate(prev_address_na=case_when(prev_address_months_count==0 ~ 1),
+         bank_months_na=case_when(bank_months_count==0 ~ 1))
+baseclean=mutate_each(baseclean, funs(replace(., is.na(.), 0)), prev_address_na)
+baseclean=mutate_each(baseclean, funs(replace(., is.na(.), 0)), bank_months_na)
+
+baseclean=na.omit(baseclean) # Drop last few cases with missing values
+```
+
+## Create training and test sets
+
+```{r}
+set.seed(125)
+
+index = sample(1:nrow(baseclean), 0.8*nrow(baseclean)) # Doing an 80-20 train-test split
+
+train = baseclean[index,] # Create the training data 
+test = baseclean[-index,] # Create the test data
+```
+
+## Resampling due to imbalanced nature of data
+
+```{r}
+over = ovun.sample(fraud_bool~., data = train, method = "over")$data
+table(over$fraud_bool)
+
+# Now have oversampled dataset with more than half of the data being fraud_bool==1
+# Will still use original test set but will now use over dataset to estimate models
+```
+
+## LASSO
+
+```{r Model Selection}
+xtrain=model.matrix(fraud_bool~., over)[,-1]
+ytrain=over$fraud_bool
+xtest=model.matrix(fraud_bool~.,test)[,-1]
+ytest=test$fraud_bool
+
+cv.out=cv.glmnet(xtrain, ytrain, alpha =1)
+
+bestlam=cv.out$lambda.min
+#Creating training model using LASSO regression
+lassomodel=glmnet(xtrain, ytrain, alpha=1, lambda=bestlam)
+coef(lassomodel)
+#Printing out the logistic model
+lassomodel$beta
+```
+
+> Lots of small coefficients. Only drop device_fraud_count.
+
+```{r}
+#Fitting training model on test set
+xtestold=xtest=model.matrix(fraud_bool~.,test)[,-1]
+pred=predict(lassomodel, s=bestlam, newx=xtestold)
+
+# Make prediction binary
+pred_LASSO_bin=ifelse(pred > 0.5, 1, 0)
+
+# Performance Metrics
+## Percent accuracy
+print(mean(pred_LASSO_bin==ytest))
+## Confusion matrix
+print(confusionMatrix(as.factor(pred_LASSO_bin), as.factor(ytest)))
+## Test MSE
+MSE=mean((pred-ytest)^2)
+mean(pred==as.matrix(ytest))
+print(MSE)
+```
+
+### Adjusting datasets by dropping device_fraud_count
+
+```{r}
+baseclean=baseclean%>%select(!device_fraud_count)
+train=as.data.frame(train)%>%select(!device_fraud_count)
+xtrain=as.data.frame(xtrain)%>%select(!device_fraud_count) # Also formats categorical variables as binary variables and chooses a base group for each
+xtest=as.data.frame(xtestold)%>%select(!device_fraud_count)
+```
+
+## The Analysis
+
+### LASSO - done above
+
+### Logistic
+
+```{r}
+logistic = glm(fraud_bool~., data=train, family=binomial)
+summary(logistic)
+
+pred_Logit = predict(logistic, newdata=test, type="response")
+pred_Logit = ifelse(pred_Logit > 0.5, 1, 0)
+
+# Performance metrics
+print(confusionMatrix(as.factor(pred_Logit), as.factor(ytest)))
+## Test MSE
+MSE=mean((pred_Logit-ytest)^2)
+mean(pred_Logit==as.matrix(ytest))
+print(MSE)
+```
+
+### LDA
+
+```{r}
+lda.model = lda(fraud_bool~., data=train)
+lda.model
+
+predmodel.train.lda = predict(lda.model, newdata=test)
+
+# Performance metrics
+confusionMatrix(as.factor(predmodel.train.lda$class), as.factor(ytest))
+# Test MSE
+predmodeltrainlda=as.data.frame(predmodel.train.lda)
+predldaclass=as.numeric(predmodeltrainlda$class)
+MSE=mean((predldaclass-ytest)^2)
+mean(predmodel.train.lda$class==as.matrix(ytest))
+print(MSE)
+```
+
+### QDA
+
+```{r}
+qda.model=qda(fraud_bool~., data=train)
+qda.model
+
+predmodel.train.qda = predict(qda.model, newdata=test)
+
+# Performance Metrics
+confusionMatrix(as.factor(predmodel.train.qda$class), as.factor(ytest))
+# Test MSE
+predmodeltrainqda=as.data.frame(predmodel.train.qda)
+predqdaclass=as.numeric(predmodeltrainqda$class)
+MSE=mean((predqdaclass-ytest)^2)
+mean(predmodel.train.qda$class==as.matrix(ytest))
+print(MSE)
+```
